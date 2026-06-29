@@ -1,0 +1,8 @@
+# local / editor / OS cruft
+.DS_Store
+Thumbs.db
+*.log
+_*
+.vscode/
+# keep .claude/ (launch.json) but ignore local-only settings
+.claude/settings.local.json
