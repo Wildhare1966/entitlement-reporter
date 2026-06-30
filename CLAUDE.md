@@ -11,7 +11,9 @@ multi-layer widget (parcels, school districts, market, environmental, terrain, u
 switcher, and a settings panel. Vanilla JS inside one `require([...])` AMD callback. Dark navy / blue
 theme via CSS custom properties in `:root`. Operator: Tyrone (`Wildhare1966`).
 
-Read **[HANDOFF.md](HANDOFF.md)** for the full code map, function index, and behavior contracts.
+Read first: **[NEXT_CHAT_KICKOFF.md](NEXT_CHAT_KICKOFF.md)** (current state + open items), then
+**[HANDOFF.md](HANDOFF.md)** (full code map, function index, behavior contracts).
+Change history: **[CHANGELOG.md](CHANGELOG.md)**. Live: https://wildhare1966.github.io/entitlement-reporter/
 
 ## Data source (owned upstream — do not assume you control the schema)
 - Layer: `https://services.arcgis.com/sW49gHAAsKKspEo8/arcgis/rest/services/LeadsDeals_Arbor/FeatureServer/0`
