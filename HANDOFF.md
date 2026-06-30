@@ -49,6 +49,26 @@ A single-file web GIS app (no build step) built on the **ArcGIS Maps SDK for Jav
 | 749 | `bloomFlash(geom)` | 3x pulse on `flashLayer` then clear |
 | 780 | `populateFilterOptions(key)` | distinct-value queries to fill filter dropdowns |
 
+### S2 additions (current line numbers; `index.html` is now ~1028 lines)
+| Line | Function | Role |
+|---|---|---|
+| ~451 | `wireView()` | re-attaches `onMapClick` + cursor to the live view after a 2D/3D rebuild |
+| ~455 | `buildView(use3D)` | **2D/3D toggle core**: destroys old view (after `view.map=null` so the shared map survives), creates `MapView` or `SceneView` on the same `#map`, restores `viewpoint`, re-wires, swaps the Tracked-Projects renderer (2D fills ↔ 3D extrude), updates the `#view3dbtn` label |
+| ~494 | `build3DRenderer()` | unique-value `polygon-3d`/`extrude` renderer (status colors, 120 m blocks) for the SceneView; counterpart to `buildRenderer()` |
+| ~816 | `earthUrl(lat,lng)` | builds the top-down Google Earth web URL (`0a,4525d,…,0t`) |
+| ~819 | `openEarth(lat,lng)` | user-gesture: open/reuse the single `ge_arbor` Earth tab and re-point + focus it |
+| ~826 | `followEarth(lat,lng)` | passive: re-point an already-open `ge_arbor` tab on record select (no focus steal, no new tab) |
+| ~829 | `setGeoLinks(geom)` | builds the detail-panel Google buttons (🌎 Google Earth, 👁 Street View); calls `followEarth` |
+| ~860 | `kmlColor(rgba)` | `[r,g,b,a]` → KML `aabbggrr` hex |
+| ~868 | `geomToKml(geom)` | Esri rings → KML Polygon/MultiGeometry; CW ring = outer, CCW = hole (`ringIsCW`) |
+| ~885 | `descTable(a)` | per-placemark `<description>` field table from `DETAIL_FIELDS` (UTC dates, `LINK_FIELDS` links) |
+| ~892 | `buildKml(features)` | assembles the full KML doc: one `<Style>` per status + a `<Placemark>` each |
+| ~910 | `exportKML()` | `#kmlbtn` handler: queries all-status features (geom, `outSR 4326`) → `buildKml` → downloads `LeadsDeals_Arbor.kml` |
+| ~958 | `onMapClick(e)` | hoisted map-click handler (Street-View pick OR hitTest→openDetail); attached by `wireView` |
+
+**New rail buttons** (`#railbar`): `#kmlbtn` (🌎 Earth KML export) and `#view3dbtn` (⛰ 3D ⇄ 🗺 2D).
+**New module state:** `is3D` (bool), `geWin` (the reused Google Earth tab handle).
+
 ### Module-level state (top of require callback, ~395–405)
 `fieldMap` (lowercase->actual field name), `dateFields` (Set), `currentView`, `selectedOID`, `baseWhere`, `extraWhere`, `leadsLayer`, `view`, `flashLayer`, `selectLayer`, `layerObjs` (id->layer), `layerOrder` (ordered array driving the panel + draw order), `settings` (`{labels, minZoom:11, labelZoom:13, maxZoom:24}`).
 
@@ -73,6 +93,15 @@ A single-file web GIS app (no build step) built on the **ArcGIS Maps SDK for Jav
 - **Summary** is a "View" link in the DETAIL panel only — NOT on list cards (was removed intentionally).
 - **Layer reorder:** top of panel list = top of map draw order. flash + select layers always stay above everything.
 - **Tracked Projects** (base layer) is checked/visible on load.
+- **(S2) 2D/3D toggle** must reuse the *same* `map` — `buildView` sets `view.map=null` before
+  `view.destroy()` (else the SDK destroys the shared map: "The provided map is already destroyed").
+  Camera position carries across via `viewpoint`; the click handler is re-attached via `wireView`.
+- **(S2) Renderer parity:** 2D uses `buildRenderer` (simple-fill), 3D uses `build3DRenderer` (extrude);
+  both are unique-value on `Status` and **must keep `STATUS_SYMBOLS` as the single color source**.
+- **(S2) KML export** mirrors the app exactly — status `<Style>` from `STATUS_SYMBOLS`, fields from
+  `DETAIL_FIELDS`, UTC `Hearing_Date`, `LINK_FIELDS` as links. If those configs change, the KML follows.
+- **(S2) Google Earth button** reuses one tab (`ge_arbor`) and follows list selection; a web page can
+  only drive a window it opened (can't load a local KML into Earth or steer a separate Earth/Earth Pro).
 
 ---
 

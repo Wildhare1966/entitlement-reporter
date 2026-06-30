@@ -273,6 +273,8 @@
     <div id="railbar">
       <button class="railtool hidden" id="filterbtn">⚲ Filter</button>
       <button class="railtool" id="settingsbtn">⚙ Settings</button>
+      <button class="railtool" id="kmlbtn" title="Download all tracked projects as a styled KML for Google Earth">🌎 Earth KML</button>
+      <button class="railtool" id="view3dbtn" title="Toggle a 3D globe view (Esri SceneView — free, no API key)">⛰ 3D</button>
       <span class="spacer"></span>
     </div>
     <div id="listhead">
@@ -408,15 +410,15 @@ const EXTRA_LAYERS = [
 
 /* ============================================================ */
 require([
-  "esri/Map", "esri/views/MapView", "esri/layers/FeatureLayer",
+  "esri/Map", "esri/views/MapView", "esri/views/SceneView", "esri/layers/FeatureLayer",
   "esri/layers/ImageryLayer", "esri/Graphic", "esri/layers/GraphicsLayer",
   "esri/geometry/support/webMercatorUtils"
-], function (Map, MapView, FeatureLayer, ImageryLayer, Graphic, GraphicsLayer, webMercatorUtils) {
+], function (Map, MapView, SceneView, FeatureLayer, ImageryLayer, Graphic, GraphicsLayer, webMercatorUtils) {
 
   const $ = (id) => document.getElementById(id);
   let fieldMap = {}, dateFields = new Set();
   let currentView = null, selectedOID = null, baseWhere = "", extraWhere = "";
-  let leadsLayer, view, flashLayer, svPick=false;
+  let leadsLayer, view, flashLayer, svPick=false, geWin=null;
   let settings = { labels:true, minZoom:11, labelZoom:13, maxZoom:24 };
 
   function rf(n){
@@ -441,9 +443,29 @@ require([
 
   /* ---- map + basemap ---- */
   const map = new Map({ basemap: "hybrid" });
-  view = new MapView({ container:"map", map:map, center:[-86.13,40.0], zoom:14 });
   flashLayer = new GraphicsLayer(); map.add(flashLayer);
   let selectLayer = new GraphicsLayer(); map.add(selectLayer);
+
+  /* ---- 2D MapView <-> 3D SceneView toggle (same map, same layers, free; no API key) ---- */
+  let is3D = false;
+  function wireView(){                       // (re)attach view-dependent handlers after a rebuild
+    view.on("click", onMapClick);
+    if(view.container) view.container.style.cursor = svPick ? "crosshair" : "";
+  }
+  function buildView(use3D){
+    const vp = view ? view.viewpoint : null; // preserve where the user was looking
+    // detach the shared map first — view.destroy() would otherwise tear the map down with it
+    if(view){ view.container = null; view.map = null; view.destroy(); }
+    is3D = use3D;
+    view = use3D ? new SceneView({ container:"map", map:map })   // 3D globe + world terrain, satellite draped
+                 : new MapView({  container:"map", map:map });
+    if(vp) view.viewpoint = vp; else { view.center=[-86.13,40.0]; view.zoom=14; }
+    wireView();
+    // swap the Tracked-Projects renderer: extruded 3D blocks in the globe, flat fills in 2D
+    if(leadsLayer) leadsLayer.renderer = use3D ? build3DRenderer() : buildRenderer();
+    const b=$("view3dbtn"); if(b){ b.textContent = use3D ? "🗺 2D" : "⛰ 3D"; b.classList.toggle("active",use3D); }
+  }
+  buildView(false);
 
   const BASEMAPS = { "bm-streets":"streets-vector", "bm-hybrid":"hybrid",
                      "bm-topo":"topo-vector", "bm-darkgray":"dark-gray-vector" };
@@ -458,6 +480,28 @@ require([
       return { value: stat, symbol: {
         type:"simple-fill", color:s.fill,
         outline:{ color:s.border, width:1.4, style:s.style }
+      }};
+    });
+    return {
+      type:"unique-value",
+      field: rf("Status"),
+      defaultSymbol: null,
+      uniqueValueInfos: infos
+    };
+  }
+
+  /* ---- 3D extruded renderer: same status colors, raised into blocks for the SceneView ---- */
+  function build3DRenderer(){
+    const infos = Object.keys(STATUS_SYMBOLS).map(stat => {
+      const s = STATUS_SYMBOLS[stat];
+      return { value: stat, symbol: {
+        type:"polygon-3d",
+        symbolLayers:[{
+          type:"extrude",
+          size: 120,                                   // block height in meters (visible when zoomed to a record)
+          material:{ color:[s.fill[0],s.fill[1],s.fill[2],0.85] },  // same hue, more opaque so blocks read as solid
+          edges:{ type:"solid", color:s.border, size:0.5 }
+        }]
       }};
     });
     return {
@@ -767,7 +811,21 @@ require([
     }).catch(()=>{});
   }
 
-  /* ---- optional Google views: deep-link out to Maps(satellite)/Earth 3D/Street View ---- */
+  /* ---- optional Google views: deep-link out to Earth 3D / Street View ---- */
+  // Earth: top-down (0 tilt), camera pulled back ~4525m so the whole site + surroundings frame in.
+  function earthUrl(lat,lng){ return `https://earth.google.com/web/@${lat.toFixed(6)},${lng.toFixed(6)},0a,4525d,35y,0h,0t,0r`; }
+  // One reusable Earth tab (named "ge_arbor"). Note: a sandboxed web page can only drive a window
+  // IT opened — it cannot load a local .kml into Earth, nor steer an Earth window opened separately.
+  function openEarth(lat,lng){   // user gesture: open or re-point the tab, and bring it forward
+    const url=earthUrl(lat,lng);
+    try {
+      if(geWin && !geWin.closed){ geWin.location.href=url; geWin.focus(); }
+      else geWin=window.open(url,"ge_arbor");
+    } catch(e){ geWin=window.open(url,"ge_arbor"); }
+  }
+  function followEarth(lat,lng){  // passive: only re-point an Earth tab we already own; never steal focus / open new
+    if(geWin && !geWin.closed){ try{ geWin.location.href=earthUrl(lat,lng); }catch(e){} }
+  }
   function setGeoLinks(geom){
     const links=$("detail-links"); links.innerHTML=""; links.className="empty";
     if(!geom) return;
@@ -778,11 +836,8 @@ require([
     catch(e){ return; }
     const lat=gp.latitude, lng=gp.longitude;
     if(lat==null||lng==null) return;
-    const ll=lat.toFixed(6)+","+lng.toFixed(6);
     const items=[
-      // Maps: satellite, overhead. Earth: top-down (0 tilt) ~300m above the site, not the angled 3D view.
-      { label:"🛰 Google Maps", href:`https://www.google.com/maps/@?api=1&map_action=map&center=${ll}&zoom=18&basemap=satellite` },
-      { label:"🌎 Earth",       href:`https://earth.google.com/web/@${lat.toFixed(6)},${lng.toFixed(6)},0a,300d,35y,0h,0t,0r` },
+      { label:"🌎 Google Earth", earth:true, lat:lat, lng:lng },
       // Street View: the centroid is inside the lot (no panorama) — let the user click a road to set the spot.
       { label:"👁 Street View",  pick:true }
     ];
@@ -790,11 +845,87 @@ require([
       const a=document.createElement("a"); a.className="geo-btn"; a.textContent=it.label;
       if(it.pick){ a.href="#"; a.title="Click, then click a road on the map to open Street View there";
         a.addEventListener("click",ev=>{ ev.preventDefault(); enterSvPick(); }); }
+      else if(it.earth){ a.href=earthUrl(it.lat,it.lng);
+        a.title="Opens one Google Earth tab and re-points it to each record you select";
+        a.addEventListener("click",ev=>{ ev.preventDefault(); openEarth(it.lat,it.lng); }); }
       else { a.href=it.href; a.target="_blank"; a.rel="noopener"; }
       links.appendChild(a);
     });
     links.className="";
+    followEarth(lat,lng);   // if an Earth tab is already open, make it follow this selection
   }
+
+  /* ---- KML export for Google Earth: same STATUS_SYMBOLS colors + DETAIL_FIELDS as the app ---- */
+  // KML color is aabbggrr hex; STATUS_SYMBOLS use [r,g,b,a(0..1)].
+  function kmlColor(rgba){
+    const a=Math.round((rgba[3]==null?1:rgba[3])*255);
+    const h=n=>("0"+(n&255).toString(16)).slice(-2);
+    return h(a)+h(rgba[2])+h(rgba[1])+h(rgba[0]);
+  }
+  // ArcGIS rings: clockwise = outer, counter-clockwise = hole. Group into polygons w/ inner boundaries.
+  function ringIsCW(ring){ let s=0; for(let i=0;i<ring.length-1;i++) s+=(ring[i+1][0]-ring[i][0])*(ring[i+1][1]+ring[i][1]); return s>0; }
+  function ringCoords(ring){ return ring.map(p=>p[0]+","+p[1]+",0").join(" "); }
+  function geomToKml(geom){
+    if(!geom||!geom.rings||!geom.rings.length) return "";
+    const polys=[]; let cur=null;
+    geom.rings.forEach(r=>{
+      if(ringIsCW(r)||!cur){ cur={outer:r,holes:[]}; polys.push(cur); }
+      else cur.holes.push(r);
+    });
+    const one=p=>"<Polygon><outerBoundaryIs><LinearRing><coordinates>"+ringCoords(p.outer)+
+      "</coordinates></LinearRing></outerBoundaryIs>"+
+      p.holes.map(h=>"<innerBoundaryIs><LinearRing><coordinates>"+ringCoords(h)+"</coordinates></LinearRing></innerBoundaryIs>").join("")+
+      "</Polygon>";
+    return polys.length===1 ? one(polys[0]) : "<MultiGeometry>"+polys.map(one).join("")+"</MultiGeometry>";
+  }
+  function descTable(a){
+    let rows="";
+    DETAIL_FIELDS.forEach(([fld,alias])=>{
+      const real=rf(fld); let raw=a[real]; if(dateFields.has(real)) raw=fmtDate(raw);
+      if(raw===null||raw===undefined||raw==="") return;
+      let cell = (LINK_FIELDS.includes(fld)&&/^https?:\/\//i.test(String(raw)))
+        ? '<a href="'+esc(raw)+'">View</a>' : esc(raw);
+      rows+="<tr><td style='padding:2px 8px;color:#555;white-space:nowrap'><b>"+esc(alias)+"</b></td><td style='padding:2px 8px'>"+cell+"</td></tr>";
+    });
+    return "<![CDATA[<table style='font:13px sans-serif;border-collapse:collapse'>"+rows+"</table>]]>";
+  }
+  function buildKml(features){
+    const statuses=Object.keys(STATUS_SYMBOLS);
+    const styles=statuses.map((st,i)=>{
+      const s=STATUS_SYMBOLS[st];
+      return "<Style id='st"+i+"'><LineStyle><color>"+kmlColor(s.border)+"</color><width>2</width></LineStyle>"+
+             "<PolyStyle><color>"+kmlColor(s.fill)+"</color></PolyStyle></Style>";
+    }).join("");
+    const statF=rf("Status"), nameF=rf("LeadsDeals");
+    const marks=features.map(f=>{
+      const a=f.attributes, st=a[statF], i=Math.max(0,statuses.indexOf(st));
+      const nm=esc((a[nameF]||"(unnamed)")+(st==="Under Contract"?" — Under Contract":""));
+      const g=geomToKml(f.geometry); if(!g) return "";
+      return "<Placemark><name>"+nm+"</name><styleUrl>#st"+i+"</styleUrl><description>"+descTable(a)+"</description>"+g+"</Placemark>";
+    }).join("");
+    return '<?xml version="1.0" encoding="UTF-8"?>\n'+
+      '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>LeadsDeals_Arbor — Tracked Projects</name>'+
+      styles+marks+"</Document></kml>";
+  }
+  function exportKML(){
+    const btn=$("kmlbtn"), orig=btn.textContent; btn.textContent="⏳ Exporting…"; btn.disabled=true;
+    const q=leadsLayer.createQuery();
+    q.where=VIEWS.all.where; q.outFields=["*"]; q.returnGeometry=true; q.outSpatialReference={wkid:4326};
+    leadsLayer.queryFeatures(q).then(res=>{
+      const kml=buildKml(res.features);
+      const blob=new Blob([kml],{type:"application/vnd.google-earth.kml+xml"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download="LeadsDeals_Arbor.kml";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),2000);
+      btn.textContent="✓ "+res.features.length+" exported"; setTimeout(()=>{btn.textContent=orig;btn.disabled=false;},2500);
+    }).catch(err=>{
+      btn.textContent="✗ Export failed"; console.error("KML export:",err);
+      setTimeout(()=>{btn.textContent=orig;btn.disabled=false;},2500);
+    });
+  }
+  $("kmlbtn").addEventListener("click",exportKML);
+  $("view3dbtn").addEventListener("click",()=>buildView(!is3D));
 
   /* ---- Street View pick mode: user clicks a road; we open the pano there ---- */
   function enterSvPick(){ svPick=true; $("sv-hint").classList.add("show"); if(view&&view.container) view.container.style.cursor="crosshair"; }
@@ -824,7 +955,7 @@ require([
 
   $("detail-back").addEventListener("click",closeDetail);
 
-  view.on("click",(e)=>{
+  function onMapClick(e){   // wired to whichever view (2D/3D) is active, via wireView()
     if(svPick){
       const mp=e.mapPoint;
       if(mp){
@@ -842,7 +973,7 @@ require([
       const q=leadsLayer.createQuery(); q.objectIds=[oid]; q.outFields=["*"]; q.returnGeometry=false;
       leadsLayer.queryFeatures(q).then(r=>{ if(r.features.length){ openSidebar(); openDetail(r.features[0]); } });
     });
-  });
+  }
   $("sv-cancel").addEventListener("click",exitSvPick);
   document.addEventListener("keydown",ev=>{ if(ev.key==="Escape"&&svPick) exitSvPick(); });
 

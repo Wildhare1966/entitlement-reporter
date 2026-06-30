@@ -3,13 +3,16 @@
 > Auto-loaded every session. Standalone single-file web-GIS app. Keep this short and stable.
 
 ## What this is
-A **single self-contained HTML file** (`index.html`, ~825 lines, no build step) built on the
+A **single self-contained HTML file** (`index.html`, ~1028 lines, no build step) built on the
 **ArcGIS Maps SDK for JavaScript 4.31 via CDN**. It renders the hosted feature layer
 **`LeadsDeals_Arbor`** as status-colored polygons on a map, with a right-side sidebar offering three
 filtered list "views" (Weekly / Competitor Proposed / All), a record detail panel, a toggleable
 multi-layer widget (parcels, school districts, market, environmental, terrain, utilities), a basemap
-switcher, and a settings panel. Vanilla JS inside one `require([...])` AMD callback. Dark navy / blue
-theme via CSS custom properties in `:root`. Operator: Tyrone (`Wildhare1966`).
+switcher, and a settings panel. Rail buttons also offer a **Google-Earth KML export** (`#kmlbtn`) and a
+**2D/3D toggle** (`#view3dbtn`, `MapView`↔`SceneView`, free, status-colored extruded blocks in 3D).
+Per-record detail deep-links open **Google Earth** (one reused tab that follows selection) and **Street
+View**. Vanilla JS inside one `require([...])` AMD callback. Dark navy / blue theme via CSS custom
+properties in `:root`. Operator: Tyrone (`Wildhare1966`).
 
 Read first: **[NEXT_CHAT_KICKOFF.md](NEXT_CHAT_KICKOFF.md)** (current state + open items), then
 **[HANDOFF.md](HANDOFF.md)** (full code map, function index, behavior contracts).
