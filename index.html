@@ -171,6 +171,13 @@
   #detail-back { background: transparent; border: 1px solid var(--line-s); color: var(--ink-soft);
     border-radius: var(--radius); padding: 6px 10px; cursor: pointer; font-size: 13px; }
   #detail-back:hover { color: var(--ink); border-color: var(--blue); }
+  #detail-links { display: flex; gap: 6px; padding: 10px 14px; flex: 0 0 auto; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line-s); }
+  #detail-links.empty { display: none; }
+  .geo-btn { flex: 1 1 auto; text-align: center; padding: 7px 8px; font-size: 11px; font-weight: 600;
+    color: var(--ink-soft); background: var(--panel-2); border: 1px solid var(--line-s);
+    border-radius: 5px; text-decoration: none; white-space: nowrap; cursor: pointer; transition: all .15s; }
+  .geo-btn:hover { color: #fff; border-color: var(--blue); background: var(--blue-soft); }
   #detail-body { flex: 1 1 auto; overflow-y: auto; }
   .frow { display: flex; border-bottom: 1px solid var(--line-s); }
   .frow:nth-child(even) { background: var(--panel-2); }
@@ -309,6 +316,7 @@
       <button id="detail-back">‹ Back</button>
       <span class="title" id="detail-title"></span>
     </div>
+    <div id="detail-links" class="empty"></div>
     <div id="detail-body"></div>
   </div>
 </div>
@@ -387,8 +395,9 @@ const EXTRA_LAYERS = [
 /* ============================================================ */
 require([
   "esri/Map", "esri/views/MapView", "esri/layers/FeatureLayer",
-  "esri/layers/ImageryLayer", "esri/Graphic", "esri/layers/GraphicsLayer"
-], function (Map, MapView, FeatureLayer, ImageryLayer, Graphic, GraphicsLayer) {
+  "esri/layers/ImageryLayer", "esri/Graphic", "esri/layers/GraphicsLayer",
+  "esri/geometry/support/webMercatorUtils"
+], function (Map, MapView, FeatureLayer, ImageryLayer, Graphic, GraphicsLayer, webMercatorUtils) {
 
   const $ = (id) => document.getElementById(id);
   let fieldMap = {}, dateFields = new Set();
@@ -729,6 +738,7 @@ require([
       row.innerHTML=`<div class="fkey">${esc(alias)}</div>${vh}`; body.appendChild(row);
     });
     $("detail").classList.add("open");
+    const lk=$("detail-links"); lk.className="empty"; lk.innerHTML="";   // reset Google links until geometry loads
 
     const sel=leadsLayer.createQuery(); sel.objectIds=[selectedOID];
     sel.returnGeometry=true; sel.outFields=[leadsLayer.objectIdField];
@@ -738,8 +748,34 @@ require([
         view.goTo({ target:geom, zoom:14 }).catch(()=>{});
         highlightSelected(geom);
         bloomFlash(geom);
+        setGeoLinks(geom);
       }
     }).catch(()=>{});
+  }
+
+  /* ---- optional Google views: deep-link out to Maps(satellite)/Earth 3D/Street View ---- */
+  function setGeoLinks(geom){
+    const links=$("detail-links"); links.innerHTML=""; links.className="empty";
+    if(!geom) return;
+    let pt = geom.centroid || (geom.extent && geom.extent.center) || (geom.type==="point" ? geom : null);
+    if(!pt) return;
+    let gp;
+    try { gp = (pt.spatialReference && pt.spatialReference.isWGS84) ? pt : webMercatorUtils.webMercatorToGeographic(pt); }
+    catch(e){ return; }
+    const lat=gp.latitude, lng=gp.longitude;
+    if(lat==null||lng==null) return;
+    const ll=lat.toFixed(6)+","+lng.toFixed(6);
+    const urls=[
+      ["🛰 Google Maps", `https://www.google.com/maps/@?api=1&map_action=map&center=${ll}&zoom=18&basemap=satellite`],
+      ["⛰ Earth 3D",     `https://earth.google.com/web/@${lat.toFixed(6)},${lng.toFixed(6)},0a,800d,35y,0h,45t,0r`],
+      ["👁 Street View",  `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${ll}`]
+    ];
+    urls.forEach(([label,href])=>{
+      const a=document.createElement("a");
+      a.className="geo-btn"; a.href=href; a.target="_blank"; a.rel="noopener"; a.textContent=label;
+      links.appendChild(a);
+    });
+    links.className="";
   }
 
   function highlightSelected(geom){
