@@ -157,6 +157,19 @@
   .field input[type="range"] { width: 100%; accent-color: var(--blue); padding: 0; }
   .slv { color: var(--blue); font-weight: 700; }
 
+  /* ---- Street View pick-mode hint ---- */
+  #sv-hint {
+    position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 30;
+    display: none; align-items: center; gap: 10px;
+    padding: 9px 14px; background: var(--blue); color: #fff;
+    border-radius: var(--radius); box-shadow: 0 4px 16px rgba(0,0,0,.45);
+    font-size: 12px; font-weight: 600;
+  }
+  #sv-hint.show { display: flex; }
+  #sv-hint button { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.55);
+    color: #fff; border-radius: 4px; padding: 3px 9px; cursor: pointer; font-size: 11px; font-weight: 600; }
+  #sv-hint button:hover { background: rgba(255,255,255,.32); }
+
   /* ---- Detail overlay ---- */
   #detail {
     position: absolute; top: 0; right: 0; height: 100%; width: var(--sidebar-w);
@@ -244,6 +257,7 @@
       <button class="viewbtn" data-view="proposed">Competitor Proposed <span class="count" id="c-proposed"></span></button>
       <button class="viewbtn" data-view="all">All <span class="count" id="c-all"></span></button>
     </div>
+    <div id="sv-hint"><span>📍 Click a road on the map to open Street View there</span><button id="sv-cancel">Cancel</button></div>
     <button id="layerbtn">Layers</button>
     <button id="basemapbtn">Basemap</button>
     <div id="layerpanel"></div>
@@ -402,7 +416,7 @@ require([
   const $ = (id) => document.getElementById(id);
   let fieldMap = {}, dateFields = new Set();
   let currentView = null, selectedOID = null, baseWhere = "", extraWhere = "";
-  let leadsLayer, view, flashLayer;
+  let leadsLayer, view, flashLayer, svPick=false;
   let settings = { labels:true, minZoom:11, labelZoom:13, maxZoom:24 };
 
   function rf(n){
@@ -667,7 +681,7 @@ require([
   /* ---- views ---- */
   document.querySelectorAll(".viewbtn").forEach(b=>b.addEventListener("click",()=>selectView(b.dataset.view)));
   function openSidebar(){ $("sidebar").classList.remove("collapsed"); }
-  function closeDetail(){ $("detail").classList.remove("open"); selectedOID=null; paintSelection(); if(selectLayer) selectLayer.removeAll(); }
+  function closeDetail(){ $("detail").classList.remove("open"); selectedOID=null; paintSelection(); if(selectLayer) selectLayer.removeAll(); exitSvPick(); }
 
   function selectView(key){
     if (currentView===key) return;
@@ -765,18 +779,26 @@ require([
     const lat=gp.latitude, lng=gp.longitude;
     if(lat==null||lng==null) return;
     const ll=lat.toFixed(6)+","+lng.toFixed(6);
-    const urls=[
-      ["🛰 Google Maps", `https://www.google.com/maps/@?api=1&map_action=map&center=${ll}&zoom=18&basemap=satellite`],
-      ["⛰ Earth 3D",     `https://earth.google.com/web/@${lat.toFixed(6)},${lng.toFixed(6)},0a,800d,35y,0h,45t,0r`],
-      ["👁 Street View",  `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${ll}`]
+    const items=[
+      // Maps: satellite, overhead. Earth: top-down (0 tilt) ~300m above the site, not the angled 3D view.
+      { label:"🛰 Google Maps", href:`https://www.google.com/maps/@?api=1&map_action=map&center=${ll}&zoom=18&basemap=satellite` },
+      { label:"🌎 Earth",       href:`https://earth.google.com/web/@${lat.toFixed(6)},${lng.toFixed(6)},0a,300d,35y,0h,0t,0r` },
+      // Street View: the centroid is inside the lot (no panorama) — let the user click a road to set the spot.
+      { label:"👁 Street View",  pick:true }
     ];
-    urls.forEach(([label,href])=>{
-      const a=document.createElement("a");
-      a.className="geo-btn"; a.href=href; a.target="_blank"; a.rel="noopener"; a.textContent=label;
+    items.forEach(it=>{
+      const a=document.createElement("a"); a.className="geo-btn"; a.textContent=it.label;
+      if(it.pick){ a.href="#"; a.title="Click, then click a road on the map to open Street View there";
+        a.addEventListener("click",ev=>{ ev.preventDefault(); enterSvPick(); }); }
+      else { a.href=it.href; a.target="_blank"; a.rel="noopener"; }
       links.appendChild(a);
     });
     links.className="";
   }
+
+  /* ---- Street View pick mode: user clicks a road; we open the pano there ---- */
+  function enterSvPick(){ svPick=true; $("sv-hint").classList.add("show"); if(view&&view.container) view.container.style.cursor="crosshair"; }
+  function exitSvPick(){ svPick=false; $("sv-hint").classList.remove("show"); if(view&&view.container) view.container.style.cursor=""; }
 
   function highlightSelected(geom){
     selectLayer.removeAll();
@@ -803,6 +825,16 @@ require([
   $("detail-back").addEventListener("click",closeDetail);
 
   view.on("click",(e)=>{
+    if(svPick){
+      const mp=e.mapPoint;
+      if(mp){
+        const gp=(mp.spatialReference&&mp.spatialReference.isWGS84)?mp:webMercatorUtils.webMercatorToGeographic(mp);
+        const ll=gp.latitude.toFixed(6)+","+gp.longitude.toFixed(6);
+        window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${ll}`,"_blank","noopener");
+      }
+      exitSvPick();
+      return;   // don't also open a record detail
+    }
     view.hitTest(e).then(resp=>{
       const hit=resp.results.find(r=>r.graphic&&r.graphic.layer===leadsLayer);
       if(!hit) return;
@@ -811,6 +843,8 @@ require([
       leadsLayer.queryFeatures(q).then(r=>{ if(r.features.length){ openSidebar(); openDetail(r.features[0]); } });
     });
   });
+  $("sv-cancel").addEventListener("click",exitSvPick);
+  document.addEventListener("keydown",ev=>{ if(ev.key==="Escape"&&svPick) exitSvPick(); });
 
   /* ---- filter popover ---- */
   $("filterbtn").addEventListener("click",()=>{
